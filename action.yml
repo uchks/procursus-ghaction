@@ -1,0 +1,142 @@
+name: Install Procursus
+description: Install the Procursus toolchain
+author: uchks
+
+inputs:
+  packages:
+    description: 'Space-delimited list of packages to install after bootstrapping'
+    required: false
+    default: ''
+  cache:
+    description: 'Cache Procursus installation for faster bootstrapping next run'
+    required: false
+    default: true
+  cache-path:
+    description: 'Location to store the Procursus cache'
+    required: false
+    default: /usr/local/opt/__procursus_cache
+  mirror:
+    description: 'URL to Procursus repository'
+    required: false
+    default: 'https://apt.procurs.us'
+  suites:
+    description: 'Suites to use'
+    required: false
+    default: 'big_sur'
+  components:
+    description: 'Components to use'
+    required: false
+    default: 'main'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Initial macOS check
+      if: runner.os != 'macOS'
+      shell: bash
+      run: |
+        echo 'This action only works on runners with macOS>=11'
+        exit 1
+
+    - name: Setup environment
+      id: information
+      shell: bash
+      run: |
+        DARWIN_VERSION=$(uname -r | cut -d'.' -f1 | tr -d '\n')
+        echo "darwin_version=$DARWIN_VERSION" >> $GITHUB_OUTPUT
+        PROCURSUS_BOOTSTRAPPED=$(if [[ -e '/opt/procursus/.procursus_strapped' ]]; then echo 'true'; else echo 'false'; fi)
+        echo "procursus_bootstrapped=$PROCURSUS_BOOTSTRAPPED" >> $GITHUB_OUTPUT
+        MIRROR_SLUG=$(echo "${{ inputs.mirror }}" | awk -F'://' '{print $NF}')
+        echo "mirror_slug=$MIRROR_SLUG" >> $GITHUB_OUTPUT
+        if (( DARWIN_VERSION < 20 )); then
+          >&2 echo 'This action only works on runners with macOS>=11'
+          exit 1
+        fi
+
+    - name: Restore cache
+      uses: actions/cache@v3
+      id: procursus-cache
+      if: ${{ steps.information.outputs.procursus_bootstrapped }} != 'true' && inputs.cache == 'true'
+      with:
+        path: ${{ inputs.cache-path }}
+        key: ${{ runner.os }}-${{ steps.information.outputs.mirror_slug }}-${{ inputs.suites }}-procursus
+
+    - name: Setup bootstrap
+      if: ${{ steps.information.outputs.procursus_bootstrapped }} != 'true' && (inputs.cache != 'true' || steps.procursus-cache.outputs.cache-hit != 'true')
+      shell: bash
+      run: |
+        curl -L ${{ inputs.mirror }}/bootstraps/${{ inputs.suites }}/bootstrap-darwin-amd64.tar.zst | zstdcat - | sudo tar -xpkf - -C / || :
+
+    - name: Restore bootstrap from cache
+      if: ${{ steps.information.outputs.procursus_bootstrapped }} != 'true' && (inputs.cache == 'true' && steps.procursus-cache.outputs.cache-hit == 'true')
+      shell: bash
+      run: |
+        sudo mkdir -p ${{ inputs.cache-path }}/procursus/var/cache/apt/archives/partial \
+          ${{ inputs.cache-path }}/procursus/var/lib/apt/lists/partial
+        sudo rsync -aWlHh --inplace ${{ inputs.cache-path }}/procursus /opt
+
+    - name: Add Procursus to PATH
+      shell: bash
+      run: |
+        PROCURSUS_PATHS=("/opt/procursus/games" "/opt/procursus/sbin" "/opt/procursus/bin" "/opt/procursus/local/sbin" "/opt/procursus/local/bin")
+        for i in "${PROCURSUS_PATHS[@]}"; do
+          case ":$PATH:" in
+            *:$i:*) echo "$i is already in PATH, not adding";;
+            *) echo "$i" >> $GITHUB_PATH;;
+          esac
+        done
+        [[ ":$CPATH:" != *:/opt/procursus/include:* ]] && echo "CPATH=$CPATH:/opt/procursus/include" >> $GITHUB_ENV
+        [[ ":$LIBRARY_PATH:" != *:/opt/procursus/lib:* ]] && echo "LIBRARY_PATH=$LIBRARY_PATH:/opt/procursus/lib" >> $GITHUB_ENV
+
+    - name: Create unprivileged user for apt method
+      shell: bash
+      run: |
+        # Taken from Procursus' apt.postinst
+        set -e
+        getHiddenUserUid() {
+          local __UIDS=$(dscl . -list /Users UniqueID | awk '{print $2}' | sort -ugr)
+          local __NewUID
+          for __NewUID in $__UIDS; do
+            if [[ $__NewUID -lt 499 ]]; then
+              break
+            fi
+          done
+          echo $((__NewUID + 1))
+        }
+        if ! id _apt &>/dev/null; then
+          # add unprivileged user for the apt methods
+          sudo dscl . -create /Users/_apt UserShell /usr/bin/false
+          sudo dscl . -create /Users/_apt NSFHomeDirectory /var/empty
+          sudo dscl . -create /Users/_apt PrimaryGroupID -1
+          sudo dscl . -create /Users/_apt UniqueID $(getHiddenUserUid)
+          sudo dscl . -create /Users/_apt RealName "APT Sandbox User"
+        else
+          echo "APT Sandbox User already exists, not creating"
+        fi
+
+    - name: Update bootstrap
+      shell: bash
+      run: |
+        echo -e 'Types: deb\nURIs: ${{ inputs.mirror }}\nSuites: ${{ inputs.suites }}\nComponents: ${{ inputs.components }}\n' | sudo tee /opt/procursus/etc/apt/sources.list.d/procursus.sources
+        sudo apt-get -y update
+        sudo apt-get -y --allow-downgrades -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confnew" dist-upgrade || :
+
+    - name: Cache bootstrap
+      if: ${{ steps.information.outputs.procursus_bootstrapped }} != 'true' && inputs.cache == 'true'
+      shell: bash
+      run: |
+        sudo mkdir -p ${{ inputs.cache-path }}
+        sudo rsync -alHh --inplace /opt/procursus ${{ inputs.cache-path }}
+        sudo rm -rf ${{ inputs.cache-path }}/procursus/var/cache/apt/archives/partial \
+          ${{ inputs.cache-path }}/procursus/var/lib/apt/lists/partial \
+          ${{ inputs.cache-path }}/procursus/Library/dpkg/triggers/Lock
+
+    - name: Install packages
+      if: ${{ inputs.packages != '' }}
+      shell: bash
+      run: |
+        sudo apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confnew" ${{ inputs.packages }}
+
+branding:
+  icon: download-cloud
+  color: purple

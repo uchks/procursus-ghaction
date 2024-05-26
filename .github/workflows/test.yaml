@@ -1,0 +1,141 @@
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  pull_request: 
+
+jobs:
+  procursus:
+    runs-on: macos-latest
+    if: "!contains(github.event.head_commit.message, 'skip-ci')"
+    name: Installs Procursus
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Installs Procursus with GitHub action
+        uses: uchks/procursus-ghaction@main
+      - name: Tests
+        continue-on-error: true
+        run: |
+          echo "--- PATH ---"
+          echo $PATH
+          
+          echo "--- CPATH ---"
+          echo $CPATH
+          
+          echo "--- LIBRARY_PATH ---"
+          echo $LIBRARY_PATH
+          
+          echo "--- apt ---"
+          apt-get
+  procursus-with-packages:
+    runs-on: macos-latest
+    if: "!contains(github.event.head_commit.message, 'skip-ci')"
+    name: Installs Procursus with extra packages
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Installs Procursus with GitHub action
+        uses: uchks/procursus-ghaction@main
+        with:
+          packages: cmake clang
+      - name: Tests
+        continue-on-error: true
+        run: |
+          echo "--- PATH ---"
+          echo $PATH
+          
+          echo "--- CPATH ---"
+          echo $CPATH
+          
+          echo "--- LIBRARY_PATH ---"
+          echo $LIBRARY_PATH
+          
+          echo "--- apt ---"
+          apt-get
+  procursus-no-cache:
+    runs-on: macos-latest
+    if: "!contains(github.event.head_commit.message, 'skip-ci')"
+    name: Installs Procursus (no cache)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Installs Procursus with GitHub action 
+        uses: uchks/procursus-ghaction@main
+        with:
+         cache: false
+      - name: Tests
+        continue-on-error: true
+        run: |
+          echo "--- PATH ---"
+          echo $PATH
+          
+          echo "--- CPATH ---"
+          echo $CPATH
+          
+          echo "--- LIBRARY_PATH ---"
+          echo $LIBRARY_PATH
+          
+          echo "--- apt ---"
+          apt-get
+  procursus-installed-twice:
+    runs-on: macos-latest
+    if: "!contains(github.event.head_commit.message, 'skip-ci')"
+    name: Installs Procursus (twice)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Installs Procursus with GitHub action 
+        uses: uchks/procursus-ghaction@main
+
+      - name: Installs ldid and make with the same action
+        uses: uchks/procursus-ghaction@main
+        with:
+          packages: ldid make
+      - name: Tests
+        continue-on-error: true
+        run: |
+          echo "--- PATH ---"
+          echo $PATH
+          
+          echo "--- CPATH ---"
+          echo $CPATH
+          
+          echo "--- LIBRARY_PATH ---"
+          echo $LIBRARY_PATH
+          
+          echo "--- apt ---"
+          apt list
+  procursus-custom-mirror:
+    runs-on: macos-latest
+    if: "!contains(github.event.head_commit.message, 'skip-ci')"
+    name: Installs Procursus with a different mirror
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Installs Procursus with GitHub action 
+        uses: uchks/procursus-ghaction@main
+        with:
+          mirror: https://procursus.itsnebula.net
+          suites: big_sur
+          components: main testing
+      - name: Tests
+        continue-on-error: true
+        run: |
+          echo "--- PATH ---"
+          echo $PATH
+          
+          echo "--- CPATH ---"
+          echo $CPATH
+          
+          echo "--- LIBRARY_PATH ---"
+          echo $LIBRARY_PATH
+          
+          echo "--- apt ---"
+          apt list
